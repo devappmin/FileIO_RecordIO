@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "person.h"
 //필요한 경우 헤더 파일과 함수를 추가할 수 있음
 
@@ -14,6 +16,27 @@
 //
 // 주의: 데이터 페이지로부터 레코드(삭제 레코드 포함)를 읽거나 쓸 때 페이지 단위로 I/O를 처리해야 하지만,
 // 헤더 레코드의 메타데이터를 저장하거나 수정하는 경우 페이지 단위로 처리하지 않고 직접 레코드 파일을 접근해서 처리한다.
+
+void argvToPerson(int argc, char *args[], Person *p) {
+	int dataSize = argc - 3;
+
+	if (dataSize != 6) {
+		printf("Invalid input error\n");
+		exit(-1);
+	}
+
+	strcpy(p->id, args[3]);
+	strcpy(p->name, args[4]);
+	strcpy(p->age, args[5]);
+	strcpy(p->addr, args[6]);
+	strcpy(p->phone, args[7]);
+	strcpy(p->email, args[8]);
+}
+
+void strcatdvd(char *dest, const char *src, char divider) {
+	strcat(dest, src);
+	dest[strlen(dest)] = divider;
+}
 
 //
 // 페이지 번호에 해당하는 페이지를 주어진 페이지 버퍼에 읽어서 저장한다. 페이지 버퍼는 반드시 페이지 크기와 일치해야 한다.
@@ -38,7 +61,16 @@ void writePage(FILE *fp, const char *pagebuf, int pagenum)
 // 
 void pack(char *recordbuf, const Person *p)
 {
+	char *temp = (char *)malloc(MAX_RECORD_SIZE);
+	strcatdvd(temp, p->id, '#');
+	strcatdvd(temp, p->name, '#');
+	strcatdvd(temp, p->age, '#');
+	strcatdvd(temp, p->addr, '#');
+	strcatdvd(temp, p->phone, '#');
+	strcatdvd(temp, p->email, '#');
+	printf("%s\n", temp);
 
+	strcpy(recordbuf, temp);
 }
 
 // 
@@ -46,7 +78,27 @@ void pack(char *recordbuf, const Person *p)
 //
 void unpack(const char *recordbuf, Person *p)
 {
+	int dvdcnt = 0, bufseek = 0;
+	char* records[6];
+	
+	for(int i = 0; i < 6; i++)
+		records[i] = (char *)malloc(sizeof(MAX_RECORD_SIZE));
 
+
+	while (dvdcnt != 6) {
+		for (int seek = 0; recordbuf[bufseek] != '#'; seek++, bufseek++) {
+			records[dvdcnt][seek] = recordbuf[bufseek];
+		}
+		
+		bufseek++, dvdcnt++;
+	}
+
+	strcpy(p->id, records[0]);
+	strcpy(p->name, records[1]);
+	strcpy(p->age, records[2]);
+	strcpy(p->addr, records[3]);
+	strcpy(p->phone, records[4]);
+	strcpy(p->email, records[5]);
 }
 
 //
@@ -69,6 +121,19 @@ int main(int argc, char *argv[])
 {
 	FILE *fp;  // 레코드 파일의 파일 포인터
 
+	Person* p = (Person *)malloc(sizeof(Person));
+	Person* p2 = (Person *)malloc(sizeof(Person));
+	char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
+	
+	argvToPerson(argc, argv, p);
+	
+	pack(recordbuf, p);
+	unpack(recordbuf, p2);
 
-	return 1;
+	printf("%s %s %s %s %s %s\n", p2->addr, p2->age, p2->email, p2->name, p2->id, p2->phone);
+
+	printf("%s\n", recordbuf);
+	return 0;
 }
+
+//./a.out a person.dat "8811032129018" "GD Hong" "23" "Seoul" "02-820-0924" "gdhong@ssu.ac.kr"
