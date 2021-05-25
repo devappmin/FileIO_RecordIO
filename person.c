@@ -109,7 +109,6 @@ void pack(char *recordbuf, const Person *p)
 	strcatdvd(temp, p->addr, '#');
 	strcatdvd(temp, p->phone, '#');
 	strcatdvd(temp, p->email, '#');
-	printf("Packed: %s\n", temp);
 
 	strcpy(recordbuf, temp);
 }
@@ -157,7 +156,6 @@ void addAppend(FILE *fp, const Person *p, int header) {
 
 		// 현재 페이지에 몇 개의 레코드가 있는지 불러오기
 		cnt = getRecordCnt(pagebuf);
-		printf("CNT : %d\n", cnt);
 
 		// 만약에 비어있는 페이지가 아니라면
 		if (cnt != 0) {
@@ -196,7 +194,6 @@ void addAppend(FILE *fp, const Person *p, int header) {
 
 		writePage(fp, pagebuf, header);
 		writeHeader(fp, readHeader(fp, 1) + 1, 1);
-		printf("Now: %d, loffset : %d, llen : %d, offset : %d, recordlen : %d, Header: %d\n\n", 4 + 8 * cnt, loffset, llen, offset, recordlen, header);
 
 		break;
 	}
@@ -216,9 +213,6 @@ void addModify(FILE *fp, const Person *p, int pageH, int recordH) {
 	int result[2];
 	memcpy(&result[0], pagebuf + HEADER_AREA_SIZE + loffset + 1, sizeof(int));
 	memcpy(&result[1], pagebuf + HEADER_AREA_SIZE + loffset + 5, sizeof(int));
-	printf("%d %d\n", pageH, recordH);
-	printf("%d %d\n", result[0], result[1]);
-	printf("%d %d\n", llen, strlen(recordbuf));
 
 	if(pageH == -1 && recordH == -1) {
 		addAppend(fp, p, readHeader(fp, 0) - 1);
@@ -267,7 +261,7 @@ void add(FILE *fp, const Person *p)
 		for(int i = 0; i < 4; i++) {
 			header[i] = readHeader(fp, i);
 		}
-		printf("%d %d %d %d\n", header[0], header[1], header[2], header[3]);
+
 		return;
 	}
 
@@ -280,11 +274,9 @@ void add(FILE *fp, const Person *p)
 //
 void delete(FILE *fp, const char *id)
 {
-	printf("Delete called!\n");
 	int pagecnt = readHeader(fp, 0);
 	int recordcnt = readHeader(fp, 1);
 
-	printf("[*] pagecnt: %d\n[*] recordcnt: %d\n", pagecnt, recordcnt);
 	for(int i = 0; i < pagecnt; i++) {
 		// 페이지 읽어오기
 		char* pagebuf = (char *)malloc(PAGE_SIZE);
@@ -299,13 +291,10 @@ void delete(FILE *fp, const char *id)
 
 			char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
 			readRecord(pagebuf, recordbuf, offset, size);
-			printf("[*] record: %s\n", recordbuf);
 
 			Person *p = (Person *)malloc(sizeof(Person));
 			unpack(recordbuf, p);
-			printf("%s %s\n", p->id, id);
 			if(strcmp(p->id, id) == 0) {
-				printf("[*] remove record called! Progress: \n");
 				int n = readHeader(fp, 2);
 				int m = readHeader(fp, 3);
 				memcpy(recordbuf, "*", 1);
@@ -315,53 +304,10 @@ void delete(FILE *fp, const char *id)
 				writePage(fp, pagebuf, i);
 				writeHeader(fp, i, 2);
 				writeHeader(fp, j, 3);
-				printf("Done\n");
 				break;
 			}
 		}
 	}
-
-	printf("\n\n");
-}
-
-void printRecord(FILE* fp) {
-	int header[4];
-	for(int i = 0; i < 4; i++) {
-		header[i] = readHeader(fp, i);
-	}
-
-	printf("[*] Header: %d %d %d %d\n", header[0], header[1], header[2], header[3]);
-
-	for(int i = 0; i < header[0]; i++) {
-		printf("\n[!] Page %d\n", i);
-		char* pagebuf = (char *)malloc(PAGE_SIZE);
-		readPage(fp, pagebuf, i);
-
-		int cnt;
-		memcpy(&cnt, pagebuf, sizeof(int));
-		printf("[*] #records : %d\n", cnt);
-		
-		for(int j = 0; j < cnt; j++) {
-			int off, len;
-			memcpy(&off, pagebuf + 4 + j * 8, sizeof(int));
-			memcpy(&len, pagebuf + 8 + j * 8, sizeof(int));
-			printf("=======================\n");
-			printf("[*] %d - offset: %d, length: %d\n", j, off, len);
-			char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
-			memcpy(recordbuf, pagebuf + off + HEADER_AREA_SIZE, len);
-			Person* p = (Person *)malloc(sizeof(Person));
-			unpack(recordbuf, p);
-			printf("[*] id  : %s\n", p->id);
-			printf("[*] name: %s\n", p->name);
-			printf("[*] age : %s\n", p->age);
-			printf("[*] addr: %s\n", p->addr);
-			printf("[*] phne: %s\n", p->phone);
-			printf("[*] mail: %s\n", p->email);
-			printf("=======================\n");
-		}
-	}
-	printf("\n\n");
-	
 }
 
 int main(int argc, char *argv[])
@@ -378,8 +324,6 @@ int main(int argc, char *argv[])
 	Person* p = (Person *)malloc(sizeof(Person));
 
 	char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
-	
-	
 
 	if(argv[1][0] == 'a') {
 		argvToPerson(argc, argv, p);
@@ -387,11 +331,7 @@ int main(int argc, char *argv[])
 	} else {
 		delete(fp, argv[3]);
 	}
-	printRecord(fp);
 
 	fclose(fp);
 	return 0;
 }
-
-//./a.out a person.dat "8811032129018" "GD Hong" "23" "Seoul" "02-820-0924" "gdhong@ssu.ac.kr"
-//./a.out d person.dat "8811032129018"
