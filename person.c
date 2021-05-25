@@ -70,6 +70,32 @@ void writeHeader(FILE *fp, int value, int offset) {
 	fwrite(&value, sizeof(int), 1, fp);
 }
 
+void readRecord(char* pagebuf, char* recordbuf, int offset, int len) {
+	memcpy(recordbuf, pagebuf + HEADER_AREA_SIZE + offset, len);
+}
+
+void writeRecord(char* pagebuf, char* recordbuf, int offset, int len) {
+	memcpy(pagebuf + HEADER_AREA_SIZE + offset, recordbuf, len);
+}
+
+int getOffset(const char* pagebuf, int pos) {
+	int temp;
+	memcpy(&temp, pagebuf + 4 + pos * 8, sizeof(int));
+	return temp;
+}
+
+int getLength(const char* pagebuf, int pos) {
+	int temp;
+	memcpy(&temp, pagebuf + 8 + pos * 8, sizeof(int));
+	return temp;
+}
+
+int getRecordCnt(const char* pagebuf) {
+	int temp;
+	memcpy(&temp, pagebuf, sizeof(int));
+	return temp;
+}
+
 //
 // 새로운 레코드를 저장할 때 터미널로부터 입력받은 정보를 Person 구조체에 먼저 저장하고, pack() 함수를 사용하여
 // 레코드 파일에 저장할 레코드 형태를 recordbuf에 만든다. 
@@ -130,15 +156,17 @@ void addAppend(FILE *fp, const Person *p, int header) {
 		readPage(fp, pagebuf, header);
 
 		// 현재 페이지에 몇 개의 레코드가 있는지 불러오기
-		memcpy(&cnt, pagebuf, sizeof(int));
+		cnt = getRecordCnt(pagebuf);
 		printf("CNT : %d\n", cnt);
 
 		// 만약에 비어있는 페이지가 아니라면
 		if (cnt != 0) {
 
 			// Header Area의 바로 전 레코드의 Offset과 Length를 불러옴
-			memcpy(&loffset, pagebuf + 4 + 8 * (cnt - 1), sizeof(int));
-			memcpy(&llen, pagebuf + 8 + 8 * (cnt - 1), sizeof(int));
+			loffset = getOffset(pagebuf, cnt - 1);
+			llen = getLength(pagebuf, cnt - 1);
+			//memcpy(&loffset, pagebuf + 4 + 8 * (cnt - 1), sizeof(int));
+			//memcpy(&llen, pagebuf + 8 + 8 * (cnt - 1), sizeof(int));
 			
 			// 이제 입력할 예정인 레코드의 offset을 설정
 			offset = loffset + llen;
@@ -151,14 +179,15 @@ void addAppend(FILE *fp, const Person *p, int header) {
 		recordlen = strlen(recordbuf);
 
 		if(recordlen + offset > DATA_AREA_SIZE || (4 + 8 * (cnt + 1)) > HEADER_AREA_SIZE) {
-			writeHeader(fp, ++header, 0);
+			writeHeader(fp, ++header + 1, 0);
 			continue;
 		}
 
 		// 레코드 길이와 오프셋 내용 저장
 		memcpy(pagebuf + 4 + 8 * cnt, &offset, sizeof(int));
 		memcpy(pagebuf + 8 + 8 * cnt, &recordlen, sizeof(int));
-		memcpy(pagebuf + HEADER_AREA_SIZE + offset, recordbuf, recordlen);
+		//memcpy(pagebuf + HEADER_AREA_SIZE + offset, recordbuf, recordlen);
+		writeRecord(pagebuf, recordbuf, offset, recordlen);
 
 		cnt++;
 		memcpy(pagebuf, &cnt, sizeof(int));
@@ -173,25 +202,41 @@ void addAppend(FILE *fp, const Person *p, int header) {
 	}
 }
 
-int* addModify(FILE *fp, const Person *p, int pageH, int recordH) {
+void addModify(FILE *fp, const Person *p, int pageH, int recordH) {
 	char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
 	char* pagebuf = (char *)malloc(PAGE_SIZE);
 
  	readPage(fp, pagebuf, pageH);
 	pack(recordbuf, p);
 
-	int llen;
-	memcpy(&llen, pagebuf + 8 + recordH * 8, sizeof(int));
+	int llen = getLength(pagebuf, recordH);
+	int loffset = getOffset(pagebuf, recordH);
+	//memcpy(&llen, pagebuf + 8 + recordH * 8, sizeof(int));
 
-	if(llen < strlen(pagebuf)) {
-		int loffset;
-		memcpy(&loffset, pagebuf + 4 + recordH * 8, sizeof(int));
-		int result[2];
-		memcpy(&result[0], pagebuf + HEADER_AREA_SIZE + loffset + 1, sizeof(int));
-		memcpy(&result[1], pagebuf + HEADER_AREA_SIZE + loffset + 5, sizeof(int));
+	int result[2];
+	memcpy(&result[0], pagebuf + HEADER_AREA_SIZE + loffset + 1, sizeof(int));
+	memcpy(&result[1], pagebuf + HEADER_AREA_SIZE + loffset + 5, sizeof(int));
+	printf("%d %d\n", pageH, recordH);
+	printf("%d %d\n", result[0], result[1]);
+	printf("%d %d\n", llen, strlen(recordbuf));
 
-		return result;
-	}	
+	if(pageH == -1 && recordH == -1) {
+		addAppend(fp, p, readHeader(fp, 0) - 1);
+		return;
+	}
+
+	if(llen < strlen(recordbuf)) {
+		//memcpy(&loffset, pagebuf + 4 + recordH * 8, sizeof(int));
+		addModify(fp, p, result[0], result[1]);
+
+	} else {
+		int size = strlen(recordbuf);
+		memcpy(pagebuf + HEADER_AREA_SIZE + loffset, recordbuf, llen);
+		memcpy(pagebuf + 8 + recordH * 8, &size, sizeof(int));
+		writeHeader(fp, result[0], 2);
+		writeHeader(fp, result[1], 3);
+		writePage(fp, pagebuf, pageH);
+	}
 
 }
 
@@ -211,15 +256,14 @@ void add(FILE *fp, const Person *p)
 
 	if(size == 0) {
 		memset(header, 0, sizeof(int) * 4);
+		writeHeader(fp, 1, 0);
 		writeHeader(fp, --header[2], 2);
 		writeHeader(fp, --header[3], 3);
 	}
 
-
-
 	// 아직 삭제한 레코드가 없을 경우
 	if(header[2] == -1 && header[3] == -1) {
-		addAppend(fp, p, header[0]);
+		addAppend(fp, p, header[0] - 1);
 		for(int i = 0; i < 4; i++) {
 			header[i] = readHeader(fp, i);
 		}
@@ -228,11 +272,7 @@ void add(FILE *fp, const Person *p)
 	}
 
 	// 삭제한 레코드가 있을 경우
-	while(true) {
-		addModify(fp, p, header[2], header[3]);
-
-		break;
-	}
+	addModify(fp, p, header[2], header[3]);
 }
 
 //
@@ -240,14 +280,48 @@ void add(FILE *fp, const Person *p)
 //
 void delete(FILE *fp, const char *id)
 {
-	char* pagebuf = (char *)malloc(PAGE_SIZE);
-	readPage(fp, pagebuf, 0);
-	if(strstr(pagebuf, id) != NULL) {
-		printf("INCLUDE");
-	} else {
-		printf("No data found;");
+	printf("Delete called!\n");
+	int pagecnt = readHeader(fp, 0);
+	int recordcnt = readHeader(fp, 1);
+
+	printf("[*] pagecnt: %d\n[*] recordcnt: %d\n", pagecnt, recordcnt);
+	for(int i = 0; i < pagecnt; i++) {
+		// 페이지 읽어오기
+		char* pagebuf = (char *)malloc(PAGE_SIZE);
+		readPage(fp ,pagebuf, i);
+
+		// record 개수 불러오기
+		int recordcnt = getRecordCnt(pagebuf);
+		
+		for (int j = 0; j < recordcnt; j++) {
+			int offset = getOffset(pagebuf, j);
+			int size = getLength(pagebuf, j);
+
+			char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
+			readRecord(pagebuf, recordbuf, offset, size);
+			printf("[*] record: %s\n", recordbuf);
+
+			Person *p = (Person *)malloc(sizeof(Person));
+			unpack(recordbuf, p);
+			printf("%s %s\n", p->id, id);
+			if(strcmp(p->id, id) == 0) {
+				printf("[*] remove record called! Progress: \n");
+				int n = readHeader(fp, 2);
+				int m = readHeader(fp, 3);
+				memcpy(recordbuf, "*", 1);
+				memcpy(recordbuf + 1, &n, sizeof(int));
+				memcpy(recordbuf + 1 + sizeof(int), &m, sizeof(int));
+				writeRecord(pagebuf, recordbuf, offset, size);
+				writePage(fp, pagebuf, i);
+				writeHeader(fp, i, 2);
+				writeHeader(fp, j, 3);
+				printf("Done\n");
+				break;
+			}
+		}
 	}
-	
+
+	printf("\n\n");
 }
 
 void printRecord(FILE* fp) {
@@ -256,9 +330,9 @@ void printRecord(FILE* fp) {
 		header[i] = readHeader(fp, i);
 	}
 
-	printf("[*] Header: %d %d %d %d\n\n", header[0], header[1], header[2], header[3]);
+	printf("[*] Header: %d %d %d %d\n", header[0], header[1], header[2], header[3]);
 
-	for(int i = 0; i <= header[0]; i++) {
+	for(int i = 0; i < header[0]; i++) {
 		printf("\n[!] Page %d\n", i);
 		char* pagebuf = (char *)malloc(PAGE_SIZE);
 		readPage(fp, pagebuf, i);
@@ -320,3 +394,4 @@ int main(int argc, char *argv[])
 }
 
 //./a.out a person.dat "8811032129018" "GD Hong" "23" "Seoul" "02-820-0924" "gdhong@ssu.ac.kr"
+//./a.out d person.dat "8811032129018"
