@@ -96,6 +96,28 @@ int getRecordCnt(const char* pagebuf) {
 	return temp;
 }
 
+void writeIndexRecord(FILE *fp, const char *recordbuf, int recordnum) {
+	fseek(fp, 4 + recordnum * 21, SEEK_SET);
+	fwrite((void *)recordbuf, 21, 1, fp);
+}
+
+void readIndexRecord(FILE *fp, const char *recordbuf, int recordnum) {
+	fseek(fp, 4 + recordnum * 21, SEEK_SET);
+	fread((void *)recordbuf, 21, 1, fp);
+}
+
+void writeIndexHeader(FILE *fp, int value) {
+	fseek(fp, 0, SEEK_SET);
+	fwrite(&value, sizeof(int), 1, fp);
+}
+
+int getIndexHeader(FILE *fp) {
+	int temp;
+	fseek(fp, 0, SEEK_SET);
+	fread(&temp, sizeof(int), 1, fp);
+	return temp;
+}
+
 //
 // 새로운 레코드를 저장할 때 터미널로부터 입력받은 정보를 Person 구조체에 먼저 저장하고, pack() 함수를 사용하여
 // 레코드 파일에 저장할 레코드 형태를 recordbuf에 만든다. 
@@ -199,11 +221,11 @@ void addAppend(FILE *fp, const Person *p, int header) {
 	}
 }
 
-void addModify(FILE *fp, const Person *p, int pageH, int recordH) {
+void addModify(FILE *fp, const Person *p, int pageH, int recordH, int callPage, int callRecord) {
 	char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
 	char* pagebuf = (char *)malloc(PAGE_SIZE);
 
- 	readPage(fp, pagebuf, pageH);
+	readPage(fp, pagebuf, pageH);
 	pack(recordbuf, p);
 
 	int llen = getLength(pagebuf, recordH);
@@ -221,14 +243,27 @@ void addModify(FILE *fp, const Person *p, int pageH, int recordH) {
 
 	if(llen < strlen(recordbuf)) {
 		//memcpy(&loffset, pagebuf + 4 + recordH * 8, sizeof(int));
-		addModify(fp, p, result[0], result[1]);
+		addModify(fp, p, result[0], result[1], pageH, recordH);
 
 	} else {
 		int size = strlen(recordbuf);
 		memcpy(pagebuf + HEADER_AREA_SIZE + loffset, recordbuf, llen);
 		memcpy(pagebuf + 8 + recordH * 8, &size, sizeof(int));
-		writeHeader(fp, result[0], 2);
-		writeHeader(fp, result[1], 3);
+		if(callPage == -1 && callRecord == -1) {
+			writeHeader(fp, result[0], 2);
+			writeHeader(fp, result[1], 3);
+		} else {
+			char* tpagebuf = (char *)malloc(PAGE_SIZE);
+			char* trecordbuf = (char *)malloc(MAX_RECORD_SIZE);
+			readPage(fp, tpagebuf, callPage);
+			int toffset = getOffset(tpagebuf, callRecord);
+			int tlength = getLength(tpagebuf, callRecord);
+			readRecord(tpagebuf, trecordbuf, toffset, tlength);
+			memcpy(trecordbuf + 1, &result[0], sizeof(int));
+			memcpy(trecordbuf + 5, &result[1], sizeof(int));
+			writeRecord(tpagebuf, trecordbuf, toffset, tlength);
+			writePage(fp, tpagebuf, callPage);
+		}
 		writePage(fp, pagebuf, pageH);
 	}
 
@@ -266,7 +301,7 @@ void add(FILE *fp, const Person *p)
 	}
 
 	// 삭제한 레코드가 있을 경우
-	addModify(fp, p, header[2], header[3]);
+	addModify(fp, p, header[2], header[3], -1, -1);
 }
 
 //
@@ -310,6 +345,107 @@ void delete(FILE *fp, const char *id)
 	}
 }
 
+int compare(const void *str1, const void *str2) {
+	return strcmp((char *)str1, (char *)str2);
+}
+
+void createIndex(FILE *idxfp, FILE *recordfp) {
+	int pagecnt = readHeader(recordfp, 0);
+	int recordcnt = readHeader(recordfp, 1);
+	
+	int qu = 0;
+	char buflist[pagecnt * recordcnt][21];
+
+	for(int i = 0; i < pagecnt; i++) {
+		char* pagebuf = (char *)malloc(PAGE_SIZE);
+		readPage(recordfp, pagebuf, i);
+
+		int recordcnt = getRecordCnt(pagebuf);
+
+		for(int j = 0; j < recordcnt; j++) {
+			int offset = getOffset(pagebuf, j);
+			int size = getLength(pagebuf, j);
+
+			char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
+			readRecord(pagebuf, recordbuf, offset, size);
+
+			Person *p = (Person *)malloc(sizeof(Person));
+			unpack(recordbuf, p);
+
+			if(p->id[0] == '*') continue;
+
+			memcpy(buflist[qu], p->id, 13);
+			memcpy(buflist[qu] + 13, &i, sizeof(int));
+			memcpy(buflist[qu++] + 17, &j, sizeof(int));
+		}
+	}
+
+	qsort(buflist, qu, 21, compare);
+
+	for(int i = 0; i < qu; i++)
+		writeIndexRecord(idxfp, buflist[i], i);
+
+	writeIndexHeader(idxfp, qu);
+}
+
+void binarysearch(FILE *idxfp, const char *id, int *pageNum, int *recordNum) {
+	int end = getIndexHeader(idxfp);
+	int start = 0;
+	int read = 0;
+	char buf[21];
+	char idbuf[14];
+
+	while(start <= end) {
+		int mid = (start + end) / 2;
+
+		readIndexRecord(idxfp, buf, mid);
+		memcpy(idbuf, buf, 13);
+		read++;
+
+		if(compare(id, idbuf) == 0) {
+			printf("#reads:%d\n", read);
+			memcpy(pageNum, buf + 13, sizeof(int));
+			memcpy(recordNum, buf + 17, sizeof(int));
+			return;
+		}
+		else if(compare(id, idbuf) > 0) {
+			start = mid + 1;
+		} else {
+			end = mid - 1;
+		}
+	}
+	printf("#reads:%d\n", read);
+	*pageNum = -1, *recordNum = -1;
+}
+
+
+void printRecord(FILE *fp, int pageNum, int recordNum) {
+	if(pageNum == -1 && recordNum == -1) {
+		printf("no persons\n");
+		return;
+	}
+
+	char *pagebuf = (char *)malloc(PAGE_SIZE);
+	readPage(fp, pagebuf, pageNum);
+
+	int off, len;
+	memcpy(&off, pagebuf + 4 + recordNum * 8, sizeof(int));
+	memcpy(&len, pagebuf + 8 + recordNum * 8, sizeof(int));
+	
+	char *recordbuf = (char *)malloc(MAX_RECORD_SIZE);
+	readRecord(pagebuf, recordbuf, off, len);
+
+	Person *p = (Person *)malloc(sizeof(Person));
+	unpack(recordbuf, p);
+	printf("id=%s\n", p->id);
+	printf("name=%s\n", p->name);
+	printf("age=%s\n", p->age);
+	printf("addr=%s\n", p->addr);
+	printf("phone=%s\n", p->phone);
+	printf("email=%s\n", p->email);
+}
+
+/*
 void printRecord(FILE* fp) {
 	int header[4];
 	for(int i = 0; i < 4; i++) {
@@ -335,6 +471,14 @@ void printRecord(FILE* fp) {
 			printf("[*] %d - offset: %d, length: %d\n", j, off, len);
 			char* recordbuf = (char *)malloc(MAX_RECORD_SIZE);
 			memcpy(recordbuf, pagebuf + off + HEADER_AREA_SIZE, len);
+
+			if(recordbuf[0] == '*') {
+				int rm1, rm2;
+				memcpy(&rm1, recordbuf + 1, sizeof(int));
+				memcpy(&rm2, recordbuf + 5, sizeof(int));
+				printf("[*] Removed! : %d %d\n", rm1, rm2);
+			}
+
 			Person* p = (Person *)malloc(sizeof(Person));
 			unpack(recordbuf, p);
 			printf("[*] id  : %s\n", p->id);
@@ -349,10 +493,12 @@ void printRecord(FILE* fp) {
 	printf("\n\n");
 	
 }
+*/
 
 int main(int argc, char *argv[])
 {
 	FILE *fp;  // 레코드 파일의 파일 포인터
+	FILE *indexfp;
 
 	Person* p = (Person *)malloc(sizeof(Person));
 
@@ -373,12 +519,40 @@ int main(int argc, char *argv[])
 			exit(-1);
 		}
 		delete(fp, argv[3]);
-	} else {
+	} else if (argv[1][0] == 'i') {
+		if((fp = fopen(argv[2], "r+b")) == NULL) {
+			printf("File open error\n");
+			exit(-1);
+		}
+		
+		if((indexfp = fopen(argv[3], "r+b")) == NULL) {
+			if((indexfp = fopen(argv[3], "w+b")) == NULL) {
+				printf("Error occurred\n");
+				exit(-1);
+			}
+		}
+		createIndex(indexfp, fp);
+	} else if(argv[1][0] == 'b') {
+		if((fp = fopen(argv[2], "r+b")) == NULL) {
+			printf("File open error\n");
+			exit(-1);
+		}
+		
+		if((indexfp = fopen(argv[3], "r+b")) == NULL) {
+			printf("Error occurred\n");
+			exit(-1);
+		}
+
+		int pageNum;
+		int recordNum;
+		binarysearch(indexfp, argv[4], &pageNum, &recordNum);
+		printRecord(fp, pageNum, recordNum);
+	}
+	else {
 		printf("No option found\n");
 		exit(0);
 	}
-
-	printRecord(fp);
+	
 
 	fclose(fp);
 	return 0;
